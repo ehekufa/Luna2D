@@ -155,21 +155,25 @@ static int l_physicsAddBody(lua_State* L) {
     // Создаем тело в мире
     b2BodyId body = b2CreateBody(physicsWorld, &bodyDef);
 
-    // Создаем и крепим форму к телу
+    // Создаем дефолтное описание формы
     b2ShapeDef shapeDef = b2DefaultShapeDef();
     shapeDef.density = 1.0f;
-    shapeDef.friction = friction;
-    shapeDef.restitution = bounce;
+    // Убираем прямое присвоение свойств в структуру, чтобы избежать ошибок компилятора
 
+    b2ShapeId shapeId;
     if (obj->type == RECTANGLE) {
         b2Polygon box = b2MakeBox((obj->width / 2.0f) / PIXELS_PER_METER, (obj->height / 2.0f) / PIXELS_PER_METER);
-        b2CreatePolygonShape(body, &shapeDef, &box);
-    } else if (obj->type == CIRCLE) {
+        shapeId = b2CreatePolygonShape(body, &shapeDef, &box);
+    } else { // CIRCLE
         b2Circle circle;
         circle.center = b2Vec2{0.0f, 0.0f};
         circle.radius = obj->radius / PIXELS_PER_METER;
-        b2CreateCircleShape(body, &shapeDef, &circle);
+        shapeId = b2CreateCircleShape(body, &shapeDef, &circle);
     }
+
+    // Задаем трение и упругость через стабильный API функций Box2D v3
+    b2Shape_SetFriction(shapeId, friction);
+    b2Shape_SetRestitution(shapeId, bounce);
 
     obj->physicsBody = body;
     return 0;
