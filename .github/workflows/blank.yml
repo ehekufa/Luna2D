@@ -1,0 +1,140 @@
+name: Build Universal Android APK (Luna2D)
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build-android:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v3
+      with:
+        submodules: recursive
+
+    - name: Set up JDK 17
+      uses: actions/setup-java@v3
+      with:
+        distribution: 'temurin'
+        java-version: '17'
+
+    - name: Setup Android SDK
+      uses: android-actions/setup-android@v2
+
+    - name: Install Android NDK & CMake
+      run: |
+        sdkmanager --install "ndk;25.2.9519653" "cmake;3.22.1"
+        echo "ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/25.2.9519653" >> $GITHUB_ENV
+
+    - name: Install System Dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libwayland-dev libxkbcommon-dev xorg-dev gcc-multilib
+
+    - name: Clone Dependencies
+      run: |
+        mkdir -p third_party
+        cd third_party
+        git clone --depth 1 https://github.com/raysan5/raylib.git
+        git clone --depth 1 https://github.com/erincatto/box2d.git
+        git clone --depth 1 https://github.com/LuaJIT/LuaJIT.git
+
+    # --- СБОРКА LUAJIT ПОД ВСЕ АРХИТЕКТУРЫ ---
+    - name: Build LuaJIT for Multiple ABIs
+      run: |
+        NDKPATH=$ANDROID_NDK_HOME
+        NDKBIN=$NDKPATH/toolchains/llvm/prebuilt/linux-x86_64/bin
+        export PATH=$NDKBIN:$PATH
+        
+        # Функция для сборки LuaJIT под конкретную архитектуру
+        build_luajit() {
+          ARCH=$1
+          TARGET=$2
+          CROSS_PREFIX=$3
+          DEST_DIR=$4
+          
+          cd third_party/LuaJIT
+          make clean
+          make HOST_CC="gcc" CROSS=$NDKBIN/$CROSS_PREFIX TARGET_FLAGS="-target $TARGET" TARGET_SYS=Android STATIC
+          mkdir -p ../../luajit_build/$DEST_DIR
+          cp src/libluajit.a ../../luajit_build/$DEST_DIR/
+          cd ../..
+        }
+
+        # 1. ARM64 (v8a)
+        build_luajit "arm64" "aarch64-linux-android29" "aarch64-linux-android-" "arm64-v8a"
+        
+        # 2. ARMv7 (v7a / x7)
+        build_luajit "arm" "armv7a-linux-androideabi29" "arm-linux-androideabi-" "armeabi-v7a"
+        
+        # 3. x86_64
+        build_luajit "x86_64" "x86_64-linux-android29" "x86_64-linux-android-" "x86_64"
+        
+        # 4. x86
+        build_luajit "x86" "i686-linux-android29" "i686-linux-android-" "x86"
+
+    # --- СБОРКА ДВИЖКА ЧЕРЕЗ CMAKE ПОД ВСЕ АРХИТЕКТУРЫ ---
+    - name: Build Luna2D Engine for all ABIs
+      run: |
+        # Массив архитектур для сборки
+        ABIS=("arm64-v8a" "armeabi-v7a" "x86" "x86_64")
+        
+        for ABI in "${ABIS[@]}"
+        do
+          echo "=== Building for ABI: $ABI ==="
+          mkdir -p build_$ABI
+          cd build_$ABI
+          
+          cmake .. \
+            -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake \
+            -DANDROID_ABI=$ABI \
+            -DANDROID_PLATFORM=android-29 \
+            -DPLATFORM=Android \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_EXAMPLES=OFF \
+            -DLUAJIT_LIB_DIR=${{ github.workspace }}/luajit_build/$ABI
+            
+          make
+          cd ..
+        done
+
+    # --- СБОРКА И УПАКОВКА УНИВЕРСАЛЬНОГО APK (FAT APK) ---
+    - name: Package Multi-ABI APK
+      run: |
+        mkdir -p apk-build/lib/arm64-v8a
+        mkdir -p apk-build/lib/armeabi-v7a
+        mkdir -p apk-build/lib/x86
+        mkdir -p apk-build/lib/x86_64
+        
+        # Копируем скомпилированные .so файлы в соответствующие папки
+        cp build_arm64-v8a/libluna2d.so apk-build/lib/arm64-v8a/libmain.so
+        cp build_armeabi-v7a/libluna2d.so apk-build/lib/armeabi-v7a/libmain.so
+        cp build_x86/libluna2d.so         apk-build/lib/x86/libmain.so
+        cp build_x86_64/libluna2d.so      apk-build/lib/x86_64/libmain.so
+        
+        # Собираем базовый APK
+        ${ANDROID_SDK_ROOT}/build-tools/33.0.2/aapt2 link \
+          -o luna2d-unaligned.apk \
+          -I ${ANDROID_SDK_ROOT}/platforms/android-29/android.jar \
+          --manifest android/AndroidManifest.xml \
+          --min-sdk-version 21 \
+          --target-sdk-version 29 \
+          --v2-signing-enabled \
+          apk-build
+          
+        # Выравниваем APK
+        ${ANDROID_SDK_ROOT}/build-tools/33.0.2/zipalign -f -v 4 luna2d-unaligned.apk Luna2D_Universal_Game.apk
+        
+        # Генерируем ключ и подписываем APK для установки на любое устройство
+        keytool -genkey -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
+        ${ANDROID_SDK_ROOT}/build-tools/33.0.2/apksigner sign --ks debug.keystore --ks-pass pass:android --out Luna2D_Universal_Release.apk Luna2D_Universal_Game.apk
+
+    - name: Upload APK Artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: Luna2D-Universal-APK
+        path: Luna2D_Universal_Release.apk
