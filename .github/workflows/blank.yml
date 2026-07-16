@@ -33,7 +33,7 @@ jobs:
     - name: Install System Dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y libwayland-dev libxkbcommon-dev xorg-dev gcc-multilib
+        sudo apt-get install -y libwayland-dev libxkbcommon-dev xorg-dev gcc-multilib g++-multilib
 
     - name: Clone Dependencies
       run: |
@@ -43,25 +43,32 @@ jobs:
         git clone --depth 1 https://github.com/erincatto/box2d.git
         git clone --depth 1 https://github.com/LuaJIT/LuaJIT.git
 
-    # --- СБОРКА LUAJIT ПОД ВСЕ АРХИТЕКТУРЫ ЧЕРЕЗ CLANG ---
+    # --- СБОРКА LUAJIT ПОД ВСЕ АРХИТЕКТУРЫ ---
     - name: Build LuaJIT for Multiple ABIs
       run: |
         NDKPATH=$ANDROID_NDK_HOME
         NDKBIN=$NDKPATH/toolchains/llvm/prebuilt/linux-x86_64/bin
         export PATH=$NDKBIN:$PATH
         
-        # Исправленная функция сборки LuaJIT под современный NDK Clang
+        # Исправленная функция сборки LuaJIT с поддержкой 32-битного кросс-компилятора
         build_luajit() {
           ARCH=$1
           TARGET=$2
           DEST_DIR=$3
+          IS_64BIT=$4
           
           cd third_party/LuaJIT
           make clean
           
-          # Передаем Clang и LLVM утилиты из NDK напрямую
+          # Если архитектура 32-битная, собираем утилиту хоста с флагом -m32
+          if [ "$IS_64BIT" = "true" ]; then
+            HOST_COMPILER="gcc"
+          else
+            HOST_COMPILER="gcc -m32"
+          fi
+          
           make -j$(nproc) \
-            HOST_CC="gcc" \
+            HOST_CC="$HOST_COMPILER" \
             STATIC_CC="$NDKBIN/clang" \
             DYNAMIC_CC="$NDKBIN/clang -fPIC" \
             TARGET_LD="$NDKBIN/clang" \
@@ -75,17 +82,17 @@ jobs:
           cd ../..
         }
 
-        # 1. ARM64 (v8a)
-        build_luajit "arm64" "aarch64-linux-android29" "arm64-v8a"
+        # 1. ARM64 (v8a) -> 64-bit
+        build_luajit "arm64" "aarch64-linux-android29" "arm64-v8a" "true"
         
-        # 2. ARMv7 (v7a / x7)
-        build_luajit "arm" "armv7a-linux-androideabi29" "armeabi-v7a"
+        # 2. ARMv7 (v7a / x7) -> 32-bit
+        build_luajit "arm" "armv7a-linux-androideabi29" "armeabi-v7a" "false"
         
-        # 3. x86_64
-        build_luajit "x86_64" "x86_64-linux-android29" "x86_64"
+        # 3. x86_64 -> 64-bit
+        build_luajit "x86_64" "x86_64-linux-android29" "x86_64" "true"
         
-        # 4. x86
-        build_luajit "x86" "i686-linux-android29" "x86"
+        # 4. x86 -> 32-bit
+        build_luajit "x86" "i686-linux-android29" "x86" "false"
 
     # --- СБОРКА ДВИЖКА ЧЕРЕЗ CMAKE ПОД ВСЕ АРХИТЕКТУРЫ ---
     - name: Build Luna2D Engine for all ABIs
