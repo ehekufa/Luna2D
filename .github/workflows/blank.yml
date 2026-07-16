@@ -43,40 +43,49 @@ jobs:
         git clone --depth 1 https://github.com/erincatto/box2d.git
         git clone --depth 1 https://github.com/LuaJIT/LuaJIT.git
 
-    # --- СБОРКА LUAJIT ПОД ВСЕ АРХИТЕКТУРЫ ---
+    # --- СБОРКА LUAJIT ПОД ВСЕ АРХИТЕКТУРЫ ЧЕРЕЗ CLANG ---
     - name: Build LuaJIT for Multiple ABIs
       run: |
         NDKPATH=$ANDROID_NDK_HOME
         NDKBIN=$NDKPATH/toolchains/llvm/prebuilt/linux-x86_64/bin
         export PATH=$NDKBIN:$PATH
         
-        # Исправленная функция сборки LuaJIT
+        # Исправленная функция сборки LuaJIT под современный NDK Clang
         build_luajit() {
           ARCH=$1
           TARGET=$2
-          CROSS_PREFIX=$3
-          DEST_DIR=$4
+          DEST_DIR=$3
           
           cd third_party/LuaJIT
           make clean
-          # Вызываем make с правильными флагами компилятора без лишней цели STATIC
-          make HOST_CC="gcc" CROSS=$NDKBIN/$CROSS_PREFIX TARGET_FLAGS="-target $TARGET" TARGET_SYS=Android
+          
+          # Передаем Clang и LLVM утилиты из NDK напрямую
+          make -j$(nproc) \
+            HOST_CC="gcc" \
+            STATIC_CC="$NDKBIN/clang" \
+            DYNAMIC_CC="$NDKBIN/clang -fPIC" \
+            TARGET_LD="$NDKBIN/clang" \
+            TARGET_AR="$NDKBIN/llvm-ar rcus" \
+            TARGET_STRIP="$NDKBIN/llvm-strip" \
+            TARGET_FLAGS="-target $TARGET" \
+            TARGET_SYS=Android
+            
           mkdir -p ../../luajit_build/$DEST_DIR
           cp src/libluajit.a ../../luajit_build/$DEST_DIR/
           cd ../..
         }
 
         # 1. ARM64 (v8a)
-        build_luajit "arm64" "aarch64-linux-android29" "aarch64-linux-android-" "arm64-v8a"
+        build_luajit "arm64" "aarch64-linux-android29" "arm64-v8a"
         
         # 2. ARMv7 (v7a / x7)
-        build_luajit "arm" "armv7a-linux-androideabi29" "arm-linux-androideabi-" "armeabi-v7a"
+        build_luajit "arm" "armv7a-linux-androideabi29" "armeabi-v7a"
         
         # 3. x86_64
-        build_luajit "x86_64" "x86_64-linux-android29" "x86_64-linux-android-" "x86_64"
+        build_luajit "x86_64" "x86_64-linux-android29" "x86_64"
         
         # 4. x86
-        build_luajit "x86" "i686-linux-android29" "i686-linux-android-" "x86"
+        build_luajit "x86" "i686-linux-android29" "x86"
 
     # --- СБОРКА ДВИЖКА ЧЕРЕЗ CMAKE ПОД ВСЕ АРХИТЕКТУРЫ ---
     - name: Build Luna2D Engine for all ABIs
