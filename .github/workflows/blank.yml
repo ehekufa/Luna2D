@@ -50,6 +50,7 @@ jobs:
         NDKBIN=$NDKPATH/toolchains/llvm/prebuilt/linux-x86_64/bin
         export PATH=$NDKBIN:$PATH
         
+        # Исправленная функция сборки LuaJIT
         build_luajit() {
           ARCH=$1
           TARGET=$2
@@ -58,15 +59,23 @@ jobs:
           
           cd third_party/LuaJIT
           make clean
-          make HOST_CC="gcc" CROSS=$NDKBIN/$CROSS_PREFIX TARGET_FLAGS="-target $TARGET" TARGET_SYS=Android STATIC
+          # Вызываем make с правильными флагами компилятора без лишней цели STATIC
+          make HOST_CC="gcc" CROSS=$NDKBIN/$CROSS_PREFIX TARGET_FLAGS="-target $TARGET" TARGET_SYS=Android
           mkdir -p ../../luajit_build/$DEST_DIR
           cp src/libluajit.a ../../luajit_build/$DEST_DIR/
           cd ../..
         }
 
+        # 1. ARM64 (v8a)
         build_luajit "arm64" "aarch64-linux-android29" "aarch64-linux-android-" "arm64-v8a"
+        
+        # 2. ARMv7 (v7a / x7)
         build_luajit "arm" "armv7a-linux-androideabi29" "arm-linux-androideabi-" "armeabi-v7a"
+        
+        # 3. x86_64
         build_luajit "x86_64" "x86_64-linux-android29" "x86_64-linux-android-" "x86_64"
+        
+        # 4. x86
         build_luajit "x86" "i686-linux-android29" "i686-linux-android-" "x86"
 
     # --- СБОРКА ДВИЖКА ЧЕРЕЗ CMAKE ПОД ВСЕ АРХИТЕКТУРЫ ---
@@ -98,17 +107,17 @@ jobs:
         mkdir -p apk-build/lib/x86
         mkdir -p apk-build/lib/x86_64
         
-        # Копируем наш main.lua из КОРНЯ репозитория в папку ресурсов APK!
+        # Копируем main.lua из КОРНЯ репозитория во внутренние ресурсы APK
         mkdir -p apk-build/assets
         cp main.lua apk-build/assets/main.lua
         
-        # Копируем скомпилированные библиотеки движка (.so)
+        # Копируем скомпилированные .so файлы движка под каждую архитектуру
         cp build_arm64-v8a/libluna2d.so apk-build/lib/arm64-v8a/libmain.so
         cp build_armeabi-v7a/libluna2d.so apk-build/lib/armeabi-v7a/libmain.so
         cp build_x86/libluna2d.so         apk-build/lib/x86/libmain.so
         cp build_x86_64/libluna2d.so      apk-build/lib/x86_64/libmain.so
         
-        # Собираем базовый APK (Манифест берется из папки android/)
+        # Линкуем и собираем базовый APK
         ${ANDROID_SDK_ROOT}/build-tools/33.0.2/aapt2 link \
           -o luna2d-unaligned.apk \
           -I ${ANDROID_SDK_ROOT}/platforms/android-29/android.jar \
@@ -121,13 +130,13 @@ jobs:
         # Выравниваем APK
         ${ANDROID_SDK_ROOT}/build-tools/33.0.2/zipalign -f -v 4 luna2d-unaligned.apk Luna2D_Universal_Game.apk
         
-        # Генерируем тестовый ключ подписи
+        # Создаем временную подпись для дебага/установки на телефон
         keytool -genkey -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
         
-        # Подписываем готовый APK
+        # Подписываем APK с помощью apksigner
         ${ANDROID_SDK_ROOT}/build-tools/33.0.2/apksigner sign --ks debug.keystore --ks-pass pass:android --out Luna2D_Universal_Release.apk Luna2D_Universal_Game.apk
 
-    # Отправляем готовый APK в артефакты для скачивания
+    # Отправка готового файла в артефакты сборки GitHub (v4)
     - name: Upload APK Artifact
       uses: actions/upload-artifact@v4
       with:
