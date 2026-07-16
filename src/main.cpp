@@ -33,7 +33,7 @@ struct DisplayObject {
     float radius = 0;
     Color color = RED;
     
-    // В Box2D v3 тела идентифицируются через легковесные структуры b2BodyId
+    // В Box2D v3 тела идентифицируются через структуру b2BodyId
     b2BodyId physicsBody = b2_nullBodyId;
 
     void draw() {
@@ -47,7 +47,7 @@ struct DisplayObject {
 
 std::vector<std::shared_ptr<DisplayObject>> sceneObjects;
 
-// В Box2D v3 мир теперь тоже идентифицируется через b2WorldId
+// Мир идентифицируется через b2WorldId
 b2WorldId physicsWorld = b2_nullWorldId;
 bool physicsRunning = false;
 const float PIXELS_PER_METER = 30.0f;
@@ -78,7 +78,6 @@ static int l_newRect(lua_State* L) {
     lua_pushinteger(L, objId);
     lua_setfield(L, -2, "id");
 
-    // Обернули лямбду в скобки ( ... ) чтобы макрос lua_pushcfunction не давал сбоев
     lua_pushcfunction(L, ([] (lua_State* L) -> int {
         DisplayObject* o = toDisplayObject(L, 1);
         float r = (float)luaL_checknumber(L, 2);
@@ -157,21 +156,18 @@ static int l_physicsAddBody(lua_State* L) {
     b2BodyId body = b2CreateBody(physicsWorld, &bodyDef);
 
     // Создаем и крепим форму к телу
+    b2ShapeDef shapeDef = b2DefaultShapeDef();
+    shapeDef.density = 1.0f;
+    shapeDef.friction = friction;
+    shapeDef.restitution = bounce;
+
     if (obj->type == RECTANGLE) {
         b2Polygon box = b2MakeBox((obj->width / 2.0f) / PIXELS_PER_METER, (obj->height / 2.0f) / PIXELS_PER_METER);
-        b2ShapeDef shapeDef = b2DefaultShapeDef();
-        shapeDef.density = 1.0f;
-        shapeDef.friction = friction;
-        shapeDef.restitution = bounce;
         b2CreatePolygonShape(body, &shapeDef, &box);
     } else if (obj->type == CIRCLE) {
         b2Circle circle;
         circle.center = b2Vec2{0.0f, 0.0f};
         circle.radius = obj->radius / PIXELS_PER_METER;
-        b2ShapeDef shapeDef = b2DefaultShapeDef();
-        shapeDef.density = 1.0f;
-        shapeDef.friction = friction;
-        shapeDef.restitution = bounce;
         b2CreateCircleShape(body, &shapeDef, &circle);
     }
 
@@ -228,11 +224,11 @@ int main() {
     while (!WindowShouldClose()) {
         if (physicsRunning) {
             // В Box2D v3 шаг симуляции делается через b2World_Step
-            // Рекомендуется использовать 4 суб-шага для стабильности столкновений
             b2World_Step(physicsWorld, 1.0f / 60.0f, 4);
 
             for (auto& obj : sceneObjects) {
-                if (b2IsValid(obj->physicsBody)) {
+                // Корректная проверка валидности ID тела в Box2D v3
+                if (b2Body_IsValid(obj->physicsBody)) {
                     b2Vec2 pos = b2Body_GetPosition(obj->physicsBody);
                     obj->x = pos.x * PIXELS_PER_METER;
                     obj->y = pos.y * PIXELS_PER_METER;
