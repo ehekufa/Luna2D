@@ -43,14 +43,13 @@ jobs:
         git clone --depth 1 https://github.com/erincatto/box2d.git
         git clone --depth 1 https://github.com/LuaJIT/LuaJIT.git
 
-    # --- СБОРКА LUAJIT ПОД ВСЕ АРХИТЕКТУРЫ ---
+    # --- СБОРКА LUAJIT ПОД ВСЕ АРХИТЕКТУРЫ С ФЛАГОМ -fPIC ---
     - name: Build LuaJIT for Multiple ABIs
       run: |
         NDKPATH=$ANDROID_NDK_HOME
         NDKBIN=$NDKPATH/toolchains/llvm/prebuilt/linux-x86_64/bin
         export PATH=$NDKBIN:$PATH
         
-        # Исправленная функция сборки LuaJIT с поддержкой 32-битного кросс-компилятора
         build_luajit() {
           ARCH=$1
           TARGET=$2
@@ -60,16 +59,16 @@ jobs:
           cd third_party/LuaJIT
           make clean
           
-          # Если архитектура 32-битная, собираем утилиту хоста с флагом -m32
           if [ "$IS_64BIT" = "true" ]; then
             HOST_COMPILER="gcc"
           else
             HOST_COMPILER="gcc -m32"
           fi
           
+          # Мы добавили флаг -fPIC прямо в STATIC_CC, чтобы избежать ошибок relocation в x86
           make -j$(nproc) \
             HOST_CC="$HOST_COMPILER" \
-            STATIC_CC="$NDKBIN/clang" \
+            STATIC_CC="$NDKBIN/clang -fPIC" \
             DYNAMIC_CC="$NDKBIN/clang -fPIC" \
             TARGET_LD="$NDKBIN/clang" \
             TARGET_AR="$NDKBIN/llvm-ar rcus" \
@@ -91,7 +90,7 @@ jobs:
         # 3. x86_64 -> 64-bit
         build_luajit "x86_64" "x86_64-linux-android29" "x86_64" "true"
         
-        # 4. x86 -> 32-bit
+        # 4. x86 -> 32-bit (теперь соберется с -fPIC и без ошибок)
         build_luajit "x86" "i686-linux-android29" "x86" "false"
 
     # --- СБОРКА ДВИЖКА ЧЕРЕЗ CMAKE ПОД ВСЕ АРХИТЕКТУРЫ ---
