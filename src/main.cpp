@@ -12,7 +12,7 @@
     #define LOGI(...) printf(__VA_ARGS__); printf("\n")
 #endif
 
-// Подключаем современный Box2D v3
+// Подключаем Box2D v3
 #include "box2d/box2d.h"
 
 extern "C" {
@@ -158,7 +158,6 @@ static int l_physicsAddBody(lua_State* L) {
     // Создаем дефолтное описание формы
     b2ShapeDef shapeDef = b2DefaultShapeDef();
     shapeDef.density = 1.0f;
-    // Убираем прямое присвоение свойств в структуру, чтобы избежать ошибок компилятора
 
     b2ShapeId shapeId;
     if (obj->type == RECTANGLE) {
@@ -171,7 +170,7 @@ static int l_physicsAddBody(lua_State* L) {
         shapeId = b2CreateCircleShape(body, &shapeDef, &circle);
     }
 
-    // Задаем трение и упругость через стабильный API функций Box2D v3
+    // Задаем трение и упругость
     b2Shape_SetFriction(shapeId, friction);
     b2Shape_SetRestitution(shapeId, bounce);
 
@@ -195,14 +194,11 @@ void registerLuaAPI(lua_State* L) {
     lua_setglobal(L, "physics");
 }
 
-#if defined(PLATFORM_ANDROID)
-void android_main(struct android_app* app) {
-#else
-int main() {
-#endif
-
+// Универсальная точка входа для Android и ПК
+int main(int argc, char* argv[]) {
     const int screenWidth = 800;
     const int screenHeight = 600;
+    
     InitWindow(screenWidth, screenHeight, "Luna2D Engine");
     SetTargetFPS(60);
 
@@ -216,6 +212,7 @@ int main() {
     registerLuaAPI(L);
 
     #if defined(PLATFORM_ANDROID)
+        // На Android файлы ассетов распаковываются во внутреннюю директорию автоматически
         if (luaL_dofile(L, "assets/main.lua") != 0) {
             LOGI("Failed to load assets/main.lua! Engine stopped.");
         }
@@ -227,11 +224,9 @@ int main() {
 
     while (!WindowShouldClose()) {
         if (physicsRunning) {
-            // В Box2D v3 шаг симуляции делается через b2World_Step
             b2World_Step(physicsWorld, 1.0f / 60.0f, 4);
 
             for (auto& obj : sceneObjects) {
-                // Корректная проверка валидности ID тела в Box2D v3
                 if (b2Body_IsValid(obj->physicsBody)) {
                     b2Vec2 pos = b2Body_GetPosition(obj->physicsBody);
                     obj->x = pos.x * PIXELS_PER_METER;
@@ -251,13 +246,10 @@ int main() {
         EndDrawing();
     }
 
-    // Уничтожение мира Box2D v3 при выходе
+    // Очистка ресурсов
     b2DestroyWorld(physicsWorld);
-
     lua_close(L);
     CloseWindow();
 
-#if !defined(PLATFORM_ANDROID)
     return 0;
-#endif
 }
