@@ -6,29 +6,23 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 set(THIRD_PARTY_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party)
 
-# 1. Подключаем Raylib
 add_subdirectory(${THIRD_PARTY_DIR}/raylib ${CMAKE_CURRENT_BINARY_DIR}/raylib)
-
-# 2. Подключаем Box2D
 add_subdirectory(${THIRD_PARTY_DIR}/box2d ${CMAKE_CURRENT_BINARY_DIR}/box2d)
 
-# 3. Находим правильную версию LuaJIT для текущей ABI
 include_directories(${THIRD_PARTY_DIR}/LuaJIT/src)
 
 if(NOT LUAJIT_LIB_DIR)
     set(LUAJIT_LIB_DIR ${THIRD_PARTY_DIR}/LuaJIT/src)
 endif()
 
-# Добавляем статическую библиотеку LuaJIT
 add_library(luajit STATIC IMPORTED)
 set_target_properties(luajit PROPERTIES
     IMPORTED_LOCATION "${LUAJIT_LIB_DIR}/libluajit.a"
 )
 
-# Главная библиотека для Android
-add_library(luna2d SHARED src/main.cpp)
+# Берем main.cpp прямо из корня
+add_library(luna2d SHARED main.cpp)
 
-# Линкуем всё вместе
 target_link_libraries(luna2d 
     raylib 
     box2d 
@@ -40,7 +34,7 @@ target_link_libraries(luna2d
 )
 
 target_include_directories(luna2d PRIVATE 
-    src 
+    ${CMAKE_CURRENT_SOURCE_DIR} 
     ${THIRD_PARTY_DIR}/raylib/src
     ${THIRD_PARTY_DIR}/box2d/include
     ${THIRD_PARTY_DIR}/LuaJIT/src
