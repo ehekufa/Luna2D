@@ -3,7 +3,6 @@
 #include <memory>
 #include <string>
 
-// Подключаем Raylib
 #include "raylib.h"
 
 #if defined(PLATFORM_ANDROID)
@@ -13,20 +12,16 @@
     #define LOGI(...) printf(__VA_ARGS__); printf("\n")
 #endif
 
-// Подключаем Box2D (Физика)
+// Подключаем современный Box2D v3
 #include "box2d/box2d.h"
 
-// Подключаем LuaJIT напрямую через C-API для максимальной скорости
 extern "C" {
     #include "lua.h"
     #include "lualib.h"
     #include "lauxlib.h"
 }
 
-// ==========================================
-// 1. АРХИТЕКТУРА ИГРОВЫХ ОБЪЕКТОВ
-// ==========================================
-
+// === СТРУКТУРЫ ИГРОВЫХ ОБЪЕКТОВ ===
 enum ObjectType { RECTANGLE, CIRCLE };
 
 struct DisplayObject {
@@ -38,33 +33,26 @@ struct DisplayObject {
     float radius = 0;
     Color color = RED;
     
-    // Ссылка на физическое тело Box2D
-    b2Body* physicsBody = nullptr;
+    // В Box2D v3 тела идентифицируются через легковесные структуры b2BodyId
+    b2BodyId physicsBody = b2_nullBodyId;
 
     void draw() {
         if (type == RECTANGLE) {
-            // Рисуем прямоугольник из центра
             DrawRectanglePro({ x, y, width, height }, { width / 2, height / 2 }, 0, color);
         } else if (type == CIRCLE) {
-            // Рисуем круг
             DrawCircle(x, y, radius, color);
         }
     }
 };
 
-// Глобальный список объектов для рендеринга
 std::vector<std::shared_ptr<DisplayObject>> sceneObjects;
 
-// Физический мир Box2D (гравитация вниз 9.8)
-std::unique_ptr<b2World> physicsWorld = std::make_unique<b2World>(b2Vec2(0.0f, 9.8f));
+// В Box2D v3 мир теперь тоже идентифицируется через b2WorldId
+b2WorldId physicsWorld = b2_nullWorldId;
 bool physicsRunning = false;
-const float PIXELS_PER_METER = 30.0f; // Масштаб физики
+const float PIXELS_PER_METER = 30.0f;
 
-// ==========================================
-// 2. ФУНКЦИИ ДЛЯ LUA (LUA API)
-// ==========================================
-
-// Системный хелпер для получения объектов из Lua
+// === СВЯЗУЮЩИЕ ФУНКЦИИ ДЛЯ LUA (API) ===
 DisplayObject* toDisplayObject(lua_State* L, int index) {
     lua_getfield(L, index, "id");
     int id = lua_tointeger(L, -1);
@@ -72,7 +60,6 @@ DisplayObject* toDisplayObject(lua_State* L, int index) {
     return sceneObjects[id].get();
 }
 
-// display.newRect(x, y, width, height)
 static int l_newRect(lua_State* L) {
     float x = (float)luaL_checknumber(L, 1);
     float y = (float)luaL_checknumber(L, 2);
@@ -87,26 +74,24 @@ static int l_newRect(lua_State* L) {
     sceneObjects.push_back(obj);
     int objId = sceneObjects.size() - 1;
 
-    // Возвращаем Lua-таблицу (объект)
     lua_newtable(L);
     lua_pushinteger(L, objId);
     lua_setfield(L, -2, "id");
 
-    // Добавляем метод setFillColor в объект
-    lua_pushcfunction(L, [](lua_State* L) -> int {
+    // Обернули лямбду в скобки ( ... ) чтобы макрос lua_pushcfunction не давал сбоев
+    lua_pushcfunction(L, ([] (lua_State* L) -> int {
         DisplayObject* o = toDisplayObject(L, 1);
         float r = (float)luaL_checknumber(L, 2);
         float g = (float)luaL_checknumber(L, 3);
         float b = (float)luaL_checknumber(L, 4);
         o->color = Color{ (unsigned char)(r * 255), (unsigned char)(g * 255), (unsigned char)(b * 255), 255 };
         return 0;
-    });
+    }));
     lua_setfield(L, -2, "setFillColor");
 
     return 1; 
 }
 
-// display.newCircle(x, y, radius)
 static int l_newCircle(lua_State* L) {
     float x = (float)luaL_checknumber(L, 1);
     float y = (float)luaL_checknumber(L, 2);
@@ -124,33 +109,29 @@ static int l_newCircle(lua_State* L) {
     lua_pushinteger(L, objId);
     lua_setfield(L, -2, "id");
 
-    // Метод setFillColor для круга
-    lua_pushcfunction(L, [](lua_State* L) -> int {
+    lua_pushcfunction(L, ([] (lua_State* L) -> int {
         DisplayObject* o = toDisplayObject(L, 1);
         float r = (float)luaL_checknumber(L, 2);
         float g = (float)luaL_checknumber(L, 3);
         float b = (float)luaL_checknumber(L, 4);
         o->color = Color{ (unsigned char)(r * 255), (unsigned char)(g * 255), (unsigned char)(b * 255), 255 };
         return 0;
-    });
+    }));
     lua_setfield(L, -2, "setFillColor");
 
     return 1;
 }
 
-// physics.start()
 static int l_physicsStart(lua_State* L) {
     physicsRunning = true;
-    LOGI("Physics started.");
+    LOGI("Physics started (Box2D v3.0).");
     return 0;
 }
 
-// physics.addBody(object, type, params)
 static int l_physicsAddBody(lua_State* L) {
     DisplayObject* obj = toDisplayObject(L, 1);
     std::string bodyType = luaL_checkstring(L, 2);
 
-    // Парсим параметры (bounce, friction)
     float bounce = 0.0f;
     float friction = 0.3f;
     if (lua_istable(L, 3)) {
@@ -163,50 +144,42 @@ static int l_physicsAddBody(lua_State* L) {
         lua_pop(L, 1);
     }
 
-    // Создаем тело в Box2D
-    b2BodyDef bodyDef;
+    // Настройка тела в Box2D v3
+    b2BodyDef bodyDef = b2DefaultBodyDef();
     if (bodyType == "dynamic") {
         bodyDef.type = b2_dynamicBody;
     } else {
         bodyDef.type = b2_staticBody;
     }
-    bodyDef.position.Set(obj->x / PIXELS_PER_METER, obj->y / PIXELS_PER_METER);
+    bodyDef.position = b2Vec2{ obj->x / PIXELS_PER_METER, obj->y / PIXELS_PER_METER };
 
-    b2Body* body = physicsWorld->CreateBody(&bodyDef);
+    // Создаем тело в мире
+    b2BodyId body = b2CreateBody(physicsWorld, &bodyDef);
 
-    // Задаем форму
+    // Создаем и крепим форму к телу
     if (obj->type == RECTANGLE) {
-        b2PolygonShape box;
-        box.SetAsBox((obj->width / 2.0f) / PIXELS_PER_METER, (obj->height / 2.0f) / PIXELS_PER_METER);
-        
-        b2FixtureDef fixtureDef;
-        fixtureDef.shape = &box;
-        fixtureDef.density = 1.0f;
-        fixtureDef.friction = friction;
-        fixtureDef.restitution = bounce;
-        body->CreateFixture(&fixtureDef);
+        b2Polygon box = b2MakeBox((obj->width / 2.0f) / PIXELS_PER_METER, (obj->height / 2.0f) / PIXELS_PER_METER);
+        b2ShapeDef shapeDef = b2DefaultShapeDef();
+        shapeDef.density = 1.0f;
+        shapeDef.friction = friction;
+        shapeDef.restitution = bounce;
+        b2CreatePolygonShape(body, &shapeDef, &box);
     } else if (obj->type == CIRCLE) {
-        b2CircleShape circle;
-        circle.m_radius = obj->radius / PIXELS_PER_METER;
-
-        b2FixtureDef fixtureDef;
-        fixtureDef.shape = &circle;
-        fixtureDef.density = 1.0f;
-        fixtureDef.friction = friction;
-        fixtureDef.restitution = bounce;
-        body->CreateFixture(&fixtureDef);
+        b2Circle circle;
+        circle.center = b2Vec2{0.0f, 0.0f};
+        circle.radius = obj->radius / PIXELS_PER_METER;
+        b2ShapeDef shapeDef = b2DefaultShapeDef();
+        shapeDef.density = 1.0f;
+        shapeDef.friction = friction;
+        shapeDef.restitution = bounce;
+        b2CreateCircleShape(body, &shapeDef, &circle);
     }
 
     obj->physicsBody = body;
     return 0;
 }
 
-// ==========================================
-// 3. СВЯЗЫВАНИЕ И СТАРТ ДВИЖКА
-// ==========================================
-
 void registerLuaAPI(lua_State* L) {
-    // Регистрация модуля display
     lua_newtable(L);
     lua_pushcfunction(L, l_newRect);
     lua_setfield(L, -2, "newRect");
@@ -214,7 +187,6 @@ void registerLuaAPI(lua_State* L) {
     lua_setfield(L, -2, "newCircle");
     lua_setglobal(L, "display");
 
-    // Регистрация модуля physics
     lua_newtable(L);
     lua_pushcfunction(L, l_physicsStart);
     lua_setfield(L, -2, "start");
@@ -223,62 +195,51 @@ void registerLuaAPI(lua_State* L) {
     lua_setglobal(L, "physics");
 }
 
-// Точка входа, совместимая с Android и ПК
 #if defined(PLATFORM_ANDROID)
 void android_main(struct android_app* app) {
-    // На Android Raylib инициализируется внутри своего системного цикла
 #else
 int main() {
 #endif
 
-    // Инициализация окна
     const int screenWidth = 800;
     const int screenHeight = 600;
     InitWindow(screenWidth, screenHeight, "Luna2D Engine");
     SetTargetFPS(60);
 
-    // Запуск LuaJIT
+    // Инициализация мира в Box2D v3
+    b2WorldDef worldDef = b2DefaultWorldDef();
+    worldDef.gravity = b2Vec2{ 0.0f, 9.8f }; // Гравитация вниз
+    physicsWorld = b2CreateWorld(&worldDef);
+
     lua_State* L = luaL_newstate();
     luaL_openlibs(L);
     registerLuaAPI(L);
 
-    // Загружаем скрипт игры
-    // На Android файлы читаются из папки assets внутри APK, на ПК - локально.
     #if defined(PLATFORM_ANDROID)
-        // Для простоты на Android грузим встроенный тестовый код, если файл не найден
         if (luaL_dofile(L, "assets/main.lua") != 0) {
-            LOGI("Failed to load main.lua, using fallback script.");
-            const char* fallback = 
-                "physics.start(); "
-                "local g = display.newRect(400, 550, 800, 50); g:setFillColor(0, 1, 0); physics.addBody(g, 'static'); "
-                "local b = display.newCircle(400, 100, 30); b:setFillColor(1, 0, 0); physics.addBody(b, 'dynamic', {bounce = 0.7});";
-            luaL_dostring(L, fallback);
+            LOGI("Failed to load assets/main.lua! Engine stopped.");
         }
     #else
-        if (luaL_dofile(L, "assets/main.lua") != 0) {
+        if (luaL_dofile(L, "main.lua") != 0) {
             std::cout << "Error loading main.lua: " << lua_tostring(L, -1) << std::endl;
         }
     #endif
 
-    // Главный игровой цикл
     while (!WindowShouldClose()) {
-        
-        // 1. Обновление физики Box2D
         if (physicsRunning) {
-            // Шаг физики: 1/60 секунды, 6 итераций скорости, 2 итерации положения
-            physicsWorld->Step(1.0f / 60.0f, 6, 2);
+            // В Box2D v3 шаг симуляции делается через b2World_Step
+            // Рекомендуется использовать 4 суб-шага для стабильности столкновений
+            b2World_Step(physicsWorld, 1.0f / 60.0f, 4);
 
-            // Переносим координаты из физического мира в графику
             for (auto& obj : sceneObjects) {
-                if (obj->physicsBody != nullptr) {
-                    b2Vec2 pos = obj->physicsBody->GetPosition();
+                if (b2IsValid(obj->physicsBody)) {
+                    b2Vec2 pos = b2Body_GetPosition(obj->physicsBody);
                     obj->x = pos.x * PIXELS_PER_METER;
                     obj->y = pos.y * PIXELS_PER_METER;
                 }
             }
         }
 
-        // 2. Отрисовка кадра
         BeginDrawing();
         ClearBackground(RAYWHITE);
 
@@ -290,7 +251,9 @@ int main() {
         EndDrawing();
     }
 
-    // Очистка ресурсов
+    // Уничтожение мира Box2D v3 при выходе
+    b2DestroyWorld(physicsWorld);
+
     lua_close(L);
     CloseWindow();
 
