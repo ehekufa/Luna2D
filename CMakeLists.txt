@@ -6,9 +6,11 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 set(THIRD_PARTY_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party)
 
+# Подключаем Raylib и Box2D
 add_subdirectory(${THIRD_PARTY_DIR}/raylib ${CMAKE_CURRENT_BINARY_DIR}/raylib)
 add_subdirectory(${THIRD_PARTY_DIR}/box2d ${CMAKE_CURRENT_BINARY_DIR}/box2d)
 
+# Пути к LuaJIT
 include_directories(${THIRD_PARTY_DIR}/LuaJIT/src)
 
 if(NOT LUAJIT_LIB_DIR)
@@ -20,9 +22,10 @@ set_target_properties(luajit PROPERTIES
     IMPORTED_LOCATION "${LUAJIT_LIB_DIR}/libluajit.a"
 )
 
-# Берем main.cpp прямо из корня
-add_library(luna2d SHARED main.cpp)
+# Указываем путь к исходнику в папке src/
+add_library(luna2d SHARED src/main.cpp)
 
+# Ссылки на библиотеки
 target_link_libraries(luna2d 
     raylib 
     box2d 
@@ -34,7 +37,7 @@ target_link_libraries(luna2d
 )
 
 target_include_directories(luna2d PRIVATE 
-    ${CMAKE_CURRENT_SOURCE_DIR} 
+    ${CMAKE_CURRENT_SOURCE_DIR}/src 
     ${THIRD_PARTY_DIR}/raylib/src
     ${THIRD_PARTY_DIR}/box2d/include
     ${THIRD_PARTY_DIR}/LuaJIT/src
