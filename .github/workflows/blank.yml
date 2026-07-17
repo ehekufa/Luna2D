@@ -49,7 +49,6 @@ jobs:
         mkdir -p third_party
         mkdir -p android
         mkdir -p assets
-        mkdir -p src
 
     - name: Clone Dependencies
       run: |
@@ -58,333 +57,16 @@ jobs:
         git clone --depth 1 https://github.com/erincatto/box2d.git
         git clone --depth 1 https://github.com/LuaJIT/LuaJIT.git
 
-    # --- КОПИРУЕМ ТВОЙ main.lua В assets ---
     - name: Copy main.lua to assets
       run: |
-        # Проверяем, есть ли main.lua в корне
         if [ -f "main.lua" ]; then
           echo "✅ Found main.lua in root, copying to assets/"
           cp main.lua assets/main.lua
         else
           echo "❌ main.lua not found in root!"
-          echo "Creating default main.lua..."
-          cat > assets/main.lua << 'EOF'
-          physics.start()
-
-          local ground = display.newRect(400, 560, 800, 40)
-          ground:setFillColor(0.2, 0.8, 0.2)
-          physics.addBody(ground, "static", { friction = 0.5, bounce = 0.1 })
-
-          local superBall = display.newCircle(200, 100, 25)
-          superBall:setFillColor(1.0, 0.1, 0.1)
-          physics.addBody(superBall, "dynamic", { bounce = 0.95, friction = 0.1 })
-
-          local heavyBox = display.newRect(400, 150, 60, 60)
-          heavyBox:setFillColor(0.1, 0.1, 1.0)
-          physics.addBody(heavyBox, "dynamic", { bounce = 0.1, friction = 0.8 })
-
-          for i = 1, 10 do
-              local x = 250 + (i * 30)
-              local y = 50 - (i * 40)
-              local drop = display.newCircle(x, y, 12)
-              drop:setFillColor(1.0 - (i * 0.08), 0.2, 0.1 + (i * 0.08))
-              physics.addBody(drop, "dynamic", { bounce = 0.4 + (i * 0.05), friction = 0.3 })
-          end
-          EOF
+          exit 1
         fi
 
-    # --- СОЗДАЕМ MAIN.CPP (ДВИЖОК) ---
-    - name: Create main.cpp
-      run: |
-        cat > src/main.cpp << 'EOF'
-        #include <iostream>
-        #include <vector>
-        #include <memory>
-        #include <string>
-        #include <fstream>
-
-        #include "raylib.h"
-
-        #if defined(PLATFORM_ANDROID)
-            #include <android/log.h>
-            #include <android/asset_manager.h>
-            #include <android/asset_manager_jni.h>
-            #define LOGI(...) ((void)__android_log_print(ANDROID_LOG_INFO, "Luna2D", __VA_ARGS__))
-            #define LOGE(...) ((void)__android_log_print(ANDROID_LOG_ERROR, "Luna2D", __VA_ARGS__))
-            AAssetManager* g_assetManager = nullptr;
-        #else
-            #define LOGI(...) printf(__VA_ARGS__); printf("\n")
-            #define LOGE(...) printf("ERROR: "); printf(__VA_ARGS__); printf("\n")
-        #endif
-
-        #include "box2d/box2d.h"
-
-        extern "C" {
-            #include "lua.h"
-            #include "lualib.h"
-            #include "lauxlib.h"
-        }
-
-        // === СТРУКТУРЫ ===
-        enum ObjectType { RECTANGLE, CIRCLE };
-
-        struct DisplayObject {
-            ObjectType type;
-            float x = 0, y = 0;
-            float width = 0, height = 0;
-            float radius = 0;
-            Color color = RED;
-            b2BodyId physicsBody = b2_nullBodyId;
-
-            void draw() {
-                if (type == RECTANGLE) {
-                    DrawRectanglePro({ x, y, width, height }, { width/2, height/2 }, 0, color);
-                } else if (type == CIRCLE) {
-                    DrawCircle(x, y, radius, color);
-                }
-            }
-        };
-
-        std::vector<std::shared_ptr<DisplayObject>> sceneObjects;
-        b2WorldId physicsWorld = b2_nullWorldId;
-        bool physicsRunning = false;
-        const float PIXELS_PER_METER = 30.0f;
-
-        // === LUA API ===
-        DisplayObject* toDisplayObject(lua_State* L, int index) {
-            lua_getfield(L, index, "id");
-            int id = lua_tointeger(L, -1);
-            lua_pop(L, 1);
-            return sceneObjects[id].get();
-        }
-
-        static int l_newRect(lua_State* L) {
-            float x = (float)luaL_checknumber(L, 1);
-            float y = (float)luaL_checknumber(L, 2);
-            float w = (float)luaL_checknumber(L, 3);
-            float h = (float)luaL_checknumber(L, 4);
-
-            auto obj = std::make_shared<DisplayObject>();
-            obj->type = RECTANGLE;
-            obj->x = x; obj->y = y; obj->width = w; obj->height = h;
-            obj->color = RED;
-
-            sceneObjects.push_back(obj);
-            int objId = sceneObjects.size() - 1;
-
-            lua_newtable(L);
-            lua_pushinteger(L, objId);
-            lua_setfield(L, -2, "id");
-
-            lua_pushcfunction(L, [](lua_State* L) -> int {
-                DisplayObject* o = toDisplayObject(L, 1);
-                float r = (float)luaL_checknumber(L, 2);
-                float g = (float)luaL_checknumber(L, 3);
-                float b = (float)luaL_checknumber(L, 4);
-                o->color = Color{ (unsigned char)(r * 255), (unsigned char)(g * 255), (unsigned char)(b * 255), 255 };
-                return 0;
-            });
-            lua_setfield(L, -2, "setFillColor");
-
-            return 1;
-        }
-
-        static int l_newCircle(lua_State* L) {
-            float x = (float)luaL_checknumber(L, 1);
-            float y = (float)luaL_checknumber(L, 2);
-            float r = (float)luaL_checknumber(L, 3);
-
-            auto obj = std::make_shared<DisplayObject>();
-            obj->type = CIRCLE;
-            obj->x = x; obj->y = y; obj->radius = r;
-            obj->color = BLUE;
-
-            sceneObjects.push_back(obj);
-            int objId = sceneObjects.size() - 1;
-
-            lua_newtable(L);
-            lua_pushinteger(L, objId);
-            lua_setfield(L, -2, "id");
-
-            lua_pushcfunction(L, [](lua_State* L) -> int {
-                DisplayObject* o = toDisplayObject(L, 1);
-                float r = (float)luaL_checknumber(L, 2);
-                float g = (float)luaL_checknumber(L, 3);
-                float b = (float)luaL_checknumber(L, 4);
-                o->color = Color{ (unsigned char)(r * 255), (unsigned char)(g * 255), (unsigned char)(b * 255), 255 };
-                return 0;
-            });
-            lua_setfield(L, -2, "setFillColor");
-
-            return 1;
-        }
-
-        static int l_physicsStart(lua_State* L) {
-            physicsRunning = true;
-            LOGI("Physics started!");
-            return 0;
-        }
-
-        static int l_physicsAddBody(lua_State* L) {
-            DisplayObject* obj = toDisplayObject(L, 1);
-            std::string bodyType = luaL_checkstring(L, 2);
-
-            float bounce = 0.0f;
-            float friction = 0.3f;
-            if (lua_istable(L, 3)) {
-                lua_getfield(L, 3, "bounce");
-                if (!lua_isnil(L, -1)) bounce = (float)lua_tonumber(L, -1);
-                lua_pop(L, 1);
-
-                lua_getfield(L, 3, "friction");
-                if (!lua_isnil(L, -1)) friction = (float)lua_tonumber(L, -1);
-                lua_pop(L, 1);
-            }
-
-            b2BodyDef bodyDef = b2DefaultBodyDef();
-            if (bodyType == "dynamic") {
-                bodyDef.type = b2_dynamicBody;
-            } else {
-                bodyDef.type = b2_staticBody;
-            }
-            bodyDef.position = b2Vec2{ obj->x / PIXELS_PER_METER, obj->y / PIXELS_PER_METER };
-
-            b2BodyId body = b2CreateBody(physicsWorld, &bodyDef);
-
-            b2ShapeDef shapeDef = b2DefaultShapeDef();
-            shapeDef.density = 1.0f;
-
-            b2ShapeId shapeId;
-            if (obj->type == RECTANGLE) {
-                b2Polygon box = b2MakeBox((obj->width / 2.0f) / PIXELS_PER_METER, 
-                                          (obj->height / 2.0f) / PIXELS_PER_METER);
-                shapeId = b2CreatePolygonShape(body, &shapeDef, &box);
-            } else {
-                b2Circle circle;
-                circle.center = b2Vec2{0.0f, 0.0f};
-                circle.radius = obj->radius / PIXELS_PER_METER;
-                shapeId = b2CreateCircleShape(body, &shapeDef, &circle);
-            }
-
-            b2Shape_SetFriction(shapeId, friction);
-            b2Shape_SetRestitution(shapeId, bounce);
-
-            obj->physicsBody = body;
-            return 0;
-        }
-
-        void registerLuaAPI(lua_State* L) {
-            lua_newtable(L);
-            lua_pushcfunction(L, l_newRect);
-            lua_setfield(L, -2, "newRect");
-            lua_pushcfunction(L, l_newCircle);
-            lua_setfield(L, -2, "newCircle");
-            lua_setglobal(L, "display");
-
-            lua_newtable(L);
-            lua_pushcfunction(L, l_physicsStart);
-            lua_setfield(L, -2, "start");
-            lua_pushcfunction(L, l_physicsAddBody);
-            lua_setfield(L, -2, "addBody");
-            lua_setglobal(L, "physics");
-        }
-
-        // === ЗАГРУЗКА LUA ФАЙЛА ===
-        std::string loadLuaFile(const std::string& path) {
-            std::string content;
-            
-            #if defined(PLATFORM_ANDROID)
-                // На Android читаем из ассетов
-                AAsset* asset = AAssetManager_open(g_assetManager, path.c_str(), AASSET_MODE_BUFFER);
-                if (asset) {
-                    const void* data = AAsset_getBuffer(asset);
-                    size_t size = AAsset_getLength(asset);
-                    content = std::string((const char*)data, size);
-                    AAsset_close(asset);
-                    LOGI("✅ Loaded %s from assets (%zu bytes)", path.c_str(), size);
-                } else {
-                    LOGE("❌ Failed to load %s from assets!", path.c_str());
-                }
-            #else
-                // На ПК читаем из файла
-                std::ifstream file(path);
-                if (file.is_open()) {
-                    std::stringstream buffer;
-                    buffer << file.rdbuf();
-                    content = buffer.str();
-                    file.close();
-                    LOGI("✅ Loaded %s from file", path.c_str());
-                } else {
-                    LOGE("❌ Failed to load %s from file!", path.c_str());
-                }
-            #endif
-            
-            return content;
-        }
-
-        #if defined(PLATFORM_ANDROID)
-        extern "C" {
-            void android_main(struct android_app* app) {
-                g_assetManager = app->activity->assetManager;
-                
-                InitWindow(800, 600, "Luna2D");
-                SetTargetFPS(60);
-
-                b2WorldDef worldDef = b2DefaultWorldDef();
-                worldDef.gravity = b2Vec2{ 0.0f, 9.8f };
-                physicsWorld = b2CreateWorld(&worldDef);
-
-                lua_State* L = luaL_newstate();
-                luaL_openlibs(L);
-                registerLuaAPI(L);
-
-                // Загружаем main.lua
-                std::string luaCode = loadLuaFile("main.lua");
-                
-                if (!luaCode.empty()) {
-                    if (luaL_loadstring(L, luaCode.c_str()) == 0) {
-                        if (lua_pcall(L, 0, 0, 0) != 0) {
-                            LOGE("Lua error: %s", lua_tostring(L, -1));
-                            lua_pop(L, 1);
-                        } else {
-                            LOGI("✅ main.lua executed successfully!");
-                        }
-                    } else {
-                        LOGE("Failed to compile Lua: %s", lua_tostring(L, -1));
-                        lua_pop(L, 1);
-                    }
-                } else {
-                    LOGE("main.lua is empty or not found!");
-                }
-
-                while (!WindowShouldClose()) {
-                    if (physicsRunning) {
-                        b2World_Step(physicsWorld, 1.0f / 60.0f, 4);
-                        for (auto& obj : sceneObjects) {
-                            if (b2Body_IsValid(obj->physicsBody)) {
-                                b2Vec2 pos = b2Body_GetPosition(obj->physicsBody);
-                                obj->x = pos.x * PIXELS_PER_METER;
-                                obj->y = pos.y * PIXELS_PER_METER;
-                            }
-                        }
-                    }
-
-                    BeginDrawing();
-                    ClearBackground(RAYWHITE);
-                    for (auto& obj : sceneObjects) obj->draw();
-                    DrawFPS(10, 10);
-                    EndDrawing();
-                }
-
-                b2DestroyWorld(physicsWorld);
-                lua_close(L);
-                CloseWindow();
-            }
-        }
-        #endif
-        EOF
-
-    # --- СОЗДАЕМ ANDROIDMANIFEST.XML ---
     - name: Create AndroidManifest.xml
       run: |
         cat > android/AndroidManifest.xml << 'EOF'
@@ -393,27 +75,21 @@ jobs:
             package="com.luna2d.game"
             android:versionCode="1"
             android:versionName="1.0">
-
             <uses-permission android:name="android.permission.INTERNET" />
-            
             <uses-feature android:glEsVersion="0x00020000" android:required="true" />
-
             <application
                 android:label="Luna2D Game"
                 android:allowBackup="true"
                 android:hasCode="false"
                 android:extractNativeLibs="true">
-
                 <activity
                     android:name="android.app.NativeActivity"
                     android:configChanges="orientation|keyboardHidden|screenSize"
                     android:screenOrientation="sensorLandscape"
                     android:exported="true">
-
                     <meta-data
                         android:name="android.app.lib_name"
                         android:value="luna2d" />
-
                     <intent-filter>
                         <action android:name="android.intent.action.MAIN" />
                         <category android:name="android.intent.category.LAUNCHER" />
@@ -423,75 +99,40 @@ jobs:
         </manifest>
         EOF
 
-    # --- СОЗДАЕМ ANDROID CMakeLists.txt ---
     - name: Create Android CMakeLists.txt
       run: |
         cat > android/CMakeLists.txt << 'EOF'
         cmake_minimum_required(VERSION 3.11)
         project(Luna2D)
-
         set(CMAKE_CXX_STANDARD 17)
         set(CMAKE_CXX_STANDARD_REQUIRED ON)
-
         set(THIRD_PARTY_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../third_party)
-
         add_subdirectory(${THIRD_PARTY_DIR}/raylib ${CMAKE_CURRENT_BINARY_DIR}/raylib)
         add_subdirectory(${THIRD_PARTY_DIR}/box2d ${CMAKE_CURRENT_BINARY_DIR}/box2d)
-
         include_directories(${THIRD_PARTY_DIR}/LuaJIT/src)
-
-        add_library(luna2d SHARED 
-            ${CMAKE_CURRENT_SOURCE_DIR}/../src/main.cpp
-        )
-
-        target_link_libraries(luna2d
-            raylib
-            box2d
-            ${THIRD_PARTY_DIR}/LuaJIT/src/libluajit.a
-            log
-            android
-            EGL
-            GLESv2
-            OpenSLES
-            z
-        )
-
-        target_include_directories(luna2d PRIVATE
-            ${CMAKE_CURRENT_SOURCE_DIR}/../src
-            ${THIRD_PARTY_DIR}/raylib/src
-            ${THIRD_PARTY_DIR}/box2d/include
-            ${THIRD_PARTY_DIR}/LuaJIT/src
-        )
-
-        set_target_properties(luna2d PROPERTIES
-            CXX_STANDARD 17
-            CXX_STANDARD_REQUIRED ON
-            POSITION_INDEPENDENT_CODE ON
-        )
+        add_library(luna2d SHARED ${CMAKE_CURRENT_SOURCE_DIR}/../src/main.cpp)
+        target_link_libraries(luna2d raylib box2d ${THIRD_PARTY_DIR}/LuaJIT/src/libluajit.a log android EGL GLESv2 OpenSLES z)
+        target_include_directories(luna2d PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../src ${THIRD_PARTY_DIR}/raylib/src ${THIRD_PARTY_DIR}/box2d/include ${THIRD_PARTY_DIR}/LuaJIT/src)
+        set_target_properties(luna2d PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON POSITION_INDEPENDENT_CODE ON)
         EOF
 
-    # --- СОБИРАЕМ LUAJIT ---
-    - name: Build LuaJIT for Multiple ABIs
+    - name: Build LuaJIT
       run: |
         NDKPATH=$ANDROID_NDK_HOME
         NDKBIN=$NDKPATH/toolchains/llvm/prebuilt/linux-x86_64/bin
         export PATH=$NDKBIN:$PATH
-        
         build_luajit() {
           ARCH=$1
           TARGET=$2
           DEST_DIR=$3
           IS_64BIT=$4
-          
           cd third_party/LuaJIT
           make clean
-          
           if [ "$IS_64BIT" = "true" ]; then
             HOST_COMPILER="gcc"
           else
             HOST_COMPILER="gcc -m32"
           fi
-          
           make -j$(nproc) \
             HOST_CC="$HOST_COMPILER" \
             STATIC_CC="$NDKBIN/clang -fPIC" \
@@ -501,18 +142,15 @@ jobs:
             TARGET_STRIP="$NDKBIN/llvm-strip" \
             TARGET_FLAGS="-target $TARGET" \
             TARGET_SYS=Android
-            
           mkdir -p ../../luajit_build/$DEST_DIR
           cp src/libluajit.a ../../luajit_build/$DEST_DIR/
           cd ../..
         }
-
         build_luajit "arm64" "aarch64-linux-android29" "arm64-v8a" "true"
         build_luajit "arm" "armv7a-linux-androideabi29" "armeabi-v7a" "false"
         build_luajit "x86_64" "x86_64-linux-android29" "x86_64" "true"
         build_luajit "x86" "i686-linux-android29" "x86" "false"
 
-    # --- СБОРКА ДВИЖКА ---
     - name: Build Luna2D Engine
       run: |
         ABIS=("arm64-v8a" "armeabi-v7a" "x86" "x86_64")
@@ -533,7 +171,6 @@ jobs:
           cd ..
         done
 
-    # --- УПАКОВКА APK ---
     - name: Package APK
       run: |
         mkdir -p apk-build/lib/arm64-v8a
@@ -541,14 +178,11 @@ jobs:
         mkdir -p apk-build/lib/x86
         mkdir -p apk-build/lib/x86_64
         mkdir -p apk-build/assets
-        
         cp assets/main.lua apk-build/assets/main.lua
-        
         cp build_arm64-v8a/libluna2d.so apk-build/lib/arm64-v8a/libluna2d.so
         cp build_armeabi-v7a/libluna2d.so apk-build/lib/armeabi-v7a/libluna2d.so
         cp build_x86/libluna2d.so apk-build/lib/x86/libluna2d.so
         cp build_x86_64/libluna2d.so apk-build/lib/x86_64/libluna2d.so
-        
         ${ANDROID_SDK_ROOT}/build-tools/33.0.2/aapt2 link \
           -o luna2d-unaligned.apk \
           -I ${ANDROID_SDK_ROOT}/platforms/android-29/android.jar \
@@ -556,9 +190,7 @@ jobs:
           --min-sdk-version 21 \
           --target-sdk-version 29 \
           apk-build
-          
         ${ANDROID_SDK_ROOT}/build-tools/33.0.2/zipalign -f -v 4 luna2d-unaligned.apk Luna2D.apk
-        
         keytool -genkey -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US" -noprompt
         ${ANDROID_SDK_ROOT}/build-tools/33.0.2/apksigner sign --ks debug.keystore --ks-pass pass:android --out Luna2D_Release.apk Luna2D.apk
 
