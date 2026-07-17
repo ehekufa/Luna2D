@@ -111,45 +111,70 @@ jobs:
         add_subdirectory(${THIRD_PARTY_DIR}/box2d ${CMAKE_CURRENT_BINARY_DIR}/box2d)
         include_directories(${THIRD_PARTY_DIR}/LuaJIT/src)
         add_library(luna2d SHARED ${CMAKE_CURRENT_SOURCE_DIR}/../src/main.cpp)
-        target_link_libraries(luna2d raylib box2d ${THIRD_PARTY_DIR}/LuaJIT/src/libluajit.a log android EGL GLESv2 OpenSLES z)
+        target_link_libraries(luna2d raylib box2d ${CMAKE_CURRENT_SOURCE_DIR}/../luajit_build/${ANDROID_ABI}/libluajit.a log android EGL GLESv2 OpenSLES z)
         target_include_directories(luna2d PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../src ${THIRD_PARTY_DIR}/raylib/src ${THIRD_PARTY_DIR}/box2d/include ${THIRD_PARTY_DIR}/LuaJIT/src)
         set_target_properties(luna2d PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON POSITION_INDEPENDENT_CODE ON)
         EOF
 
-    - name: Build LuaJIT
+    - name: Build LuaJIT for all ABIs
       run: |
         NDKPATH=$ANDROID_NDK_HOME
         NDKBIN=$NDKPATH/toolchains/llvm/prebuilt/linux-x86_64/bin
         export PATH=$NDKBIN:$PATH
+        
+        mkdir -p luajit_build/arm64-v8a
+        mkdir -p luajit_build/armeabi-v7a
+        mkdir -p luajit_build/x86_64
+        mkdir -p luajit_build/x86
+        
         build_luajit() {
           ARCH=$1
           TARGET=$2
           DEST_DIR=$3
-          IS_64BIT=$4
+          
+          echo "=== Building LuaJIT for $ARCH ($TARGET) ==="
           cd third_party/LuaJIT
           make clean
-          if [ "$IS_64BIT" = "true" ]; then
-            HOST_COMPILER="gcc"
-          else
-            HOST_COMPILER="gcc -m32"
+          
+          # Используем более простой способ сборки
+          if [ "$ARCH" = "arm64" ]; then
+            make HOST_CC="gcc" \
+                 CROSS="$NDKBIN/aarch64-linux-android-" \
+                 TARGET_CFLAGS="-fPIC" \
+                 TARGET_SYS=Android \
+                 BUILDMODE=static \
+                 -j$(nproc)
+          elif [ "$ARCH" = "arm" ]; then
+            make HOST_CC="gcc -m32" \
+                 CROSS="$NDKBIN/armv7a-linux-androideabi-" \
+                 TARGET_CFLAGS="-fPIC" \
+                 TARGET_SYS=Android \
+                 BUILDMODE=static \
+                 -j$(nproc)
+          elif [ "$ARCH" = "x86_64" ]; then
+            make HOST_CC="gcc" \
+                 CROSS="$NDKBIN/x86_64-linux-android-" \
+                 TARGET_CFLAGS="-fPIC" \
+                 TARGET_SYS=Android \
+                 BUILDMODE=static \
+                 -j$(nproc)
+          elif [ "$ARCH" = "x86" ]; then
+            make HOST_CC="gcc -m32" \
+                 CROSS="$NDKBIN/i686-linux-android-" \
+                 TARGET_CFLAGS="-fPIC" \
+                 TARGET_SYS=Android \
+                 BUILDMODE=static \
+                 -j$(nproc)
           fi
-          make -j$(nproc) \
-            HOST_CC="$HOST_COMPILER" \
-            STATIC_CC="$NDKBIN/clang -fPIC" \
-            DYNAMIC_CC="$NDKBIN/clang -fPIC" \
-            TARGET_LD="$NDKBIN/clang" \
-            TARGET_AR="$NDKBIN/llvm-ar rcus" \
-            TARGET_STRIP="$NDKBIN/llvm-strip" \
-            TARGET_FLAGS="-target $TARGET" \
-            TARGET_SYS=Android
-          mkdir -p ../../luajit_build/$DEST_DIR
+          
           cp src/libluajit.a ../../luajit_build/$DEST_DIR/
           cd ../..
         }
-        build_luajit "arm64" "aarch64-linux-android29" "arm64-v8a" "true"
-        build_luajit "arm" "armv7a-linux-androideabi29" "armeabi-v7a" "false"
-        build_luajit "x86_64" "x86_64-linux-android29" "x86_64" "true"
-        build_luajit "x86" "i686-linux-android29" "x86" "false"
+
+        build_luajit "arm64" "aarch64-linux-android29" "arm64-v8a"
+        build_luajit "arm" "armv7a-linux-androideabi29" "armeabi-v7a"
+        build_luajit "x86_64" "x86_64-linux-android29" "x86_64"
+        build_luajit "x86" "i686-linux-android29" "x86"
 
     - name: Build Luna2D Engine
       run: |
@@ -166,6 +191,7 @@ jobs:
             -DPLATFORM=Android \
             -DCMAKE_BUILD_TYPE=Release \
             -DBUILD_EXAMPLES=OFF \
+            -DANDROID_ABI=$ABI \
             -DLUAJIT_LIB_DIR=${{ github.workspace }}/luajit_build/$ABI
           make -j$(nproc)
           cd ..
